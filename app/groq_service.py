@@ -1,10 +1,10 @@
 from groq import Groq
+
 from .config import GROQ_API_KEY
 from .pdf_memory import get_pdf_text
-
+from .search import web_search
 
 client = Groq(api_key=GROQ_API_KEY)
-
 
 SYSTEM_PROMPT = """
 You are Jarvis, an advanced AI assistant created by Pratik.
@@ -29,14 +29,13 @@ Rules:
 6. Never claim to be ChatGPT.
 7. Introduce yourself as Jarvis when asked.
 8. If someone asks "Who created you?", answer:
-"I was created by Pratik using React, FastAPI, and the Groq API."
-
-9. If a PDF is uploaded, use PDF information to answer questions.
+   "I was created by Pratik using React, FastAPI, and the Groq API."
+9. If a PDF is uploaded, use the PDF information when relevant.
+10. If internet search results are provided, use them to answer with the latest information.
 """
 
 
 def ask_jarvis(messages):
-
     try:
 
         chat_messages = [
@@ -46,31 +45,74 @@ def ask_jarvis(messages):
             }
         ]
 
+        # -------------------------
+        # PDF Context
+        # -------------------------
 
-        # Add PDF knowledge
         pdf_context = get_pdf_text()
 
         if pdf_context:
-
             chat_messages.append(
                 {
                     "role": "system",
                     "content": f"""
 You have access to an uploaded PDF.
 
-Answer user questions using this PDF content.
+Use the following PDF content when answering user questions.
 
 PDF Content:
 
 {pdf_context[:6000]}
-"""
+""",
                 }
             )
 
+        # -------------------------
+        # Internet Search
+        # -------------------------
 
-        # Add chat history
+        latest_question = messages[-1].content
+
+        try:
+            search_results = web_search(latest_question)
+
+            if search_results:
+
+                web_context = "\n\n".join(
+                    [
+                        f"""Title: {r['title']}
+
+Summary:
+{r['body']}
+
+URL:
+{r['url']}
+"""
+                        for r in search_results
+                    ]
+                )
+
+                chat_messages.append(
+                    {
+                        "role": "system",
+                        "content": f"""
+Use these latest internet search results when answering.
+
+Internet Search Results:
+
+{web_context}
+""",
+                    }
+                )
+
+        except Exception:
+            pass
+
+        # -------------------------
+        # Chat History
+        # -------------------------
+
         for msg in messages:
-
             chat_messages.append(
                 {
                     "role": msg.role,
@@ -78,31 +120,24 @@ PDF Content:
                 }
             )
 
+        # -------------------------
+        # Groq
+        # -------------------------
 
         response = client.chat.completions.create(
-
             model="llama-3.3-70b-versatile",
-
             messages=chat_messages,
-
             temperature=0.7,
-
             max_tokens=1024,
         )
 
-
         return response.choices[0].message.content
 
-
-
     except Exception as e:
-
         return f"❌ Error: {str(e)}"
 
 
-
 def ask_jarvis_stream(messages):
-
 
     chat_messages = [
         {
@@ -111,26 +146,72 @@ def ask_jarvis_stream(messages):
         }
     ]
 
+    # -------------------------
+    # PDF Context
+    # -------------------------
 
     pdf_context = get_pdf_text()
 
-
     if pdf_context:
-
         chat_messages.append(
             {
                 "role": "system",
                 "content": f"""
-Use this uploaded PDF as knowledge:
+Use this uploaded PDF while answering.
+
+PDF Content:
 
 {pdf_context[:6000]}
-"""
+""",
             }
         )
 
+    # -------------------------
+    # Internet Search
+    # -------------------------
+
+    latest_question = messages[-1].content
+
+    try:
+        search_results = web_search(latest_question)
+
+        if search_results:
+
+            web_context = "\n\n".join(
+                [
+                    f"""Title: {r['title']}
+
+Summary:
+{r['body']}
+
+URL:
+{r['url']}
+"""
+                    for r in search_results
+                ]
+            )
+
+            chat_messages.append(
+                {
+                    "role": "system",
+                    "content": f"""
+Use these latest internet search results.
+
+Internet Search Results:
+
+{web_context}
+""",
+                }
+            )
+
+    except Exception:
+        pass
+
+    # -------------------------
+    # Chat History
+    # -------------------------
 
     for msg in messages:
-
         chat_messages.append(
             {
                 "role": msg.role,
@@ -138,24 +219,18 @@ Use this uploaded PDF as knowledge:
             }
         )
 
+    # -------------------------
+    # Streaming Response
+    # -------------------------
 
     stream = client.chat.completions.create(
-
         model="llama-3.3-70b-versatile",
-
         messages=chat_messages,
-
         temperature=0.7,
-
         max_tokens=1024,
-
         stream=True,
-
     )
 
-
     for chunk in stream:
-
         if chunk.choices and chunk.choices[0].delta.content:
-
             yield chunk.choices[0].delta.content
